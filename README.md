@@ -127,9 +127,9 @@
 .
 ├── main.py         # Streamlit UI 및 메인 애플리케이션 로직
 ├── utils.py        # 핵심 로직 (임베딩, 검색, 에이전트 응답 생성)
-├── pdf_json.py     # (가정) PDF -> JSON 변환 유틸리티
-├── lawapi.py       # (가정) 국가법령정보센터 법률 API 연동
-├── adminapi.py     # (가정) 국가법령정보센터 행정규칙 API 연동
+├── pdf_json.py     # PDF -> JSON 변환 유틸리티
+├── lawapi.py       # 국가법령정보센터 법률 API 연동
+├── adminapi.py     # 국가법령정보센터 행정규칙 API 연동
 ├── requirements.txt # 프로젝트 의존성 목록
 └── .env            # API 키 등 환경 변수
 ```
