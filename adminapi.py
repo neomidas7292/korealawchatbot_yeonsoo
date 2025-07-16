@@ -84,8 +84,8 @@ class AdminAPI:
         """
         PDF에서 추출한 텍스트를 조문별로 파싱하여 JSON 구조로 변환하는 함수
         """
-        print(f"📝 파싱할 텍스트 타입: {type(text)}")
-        print(f"📝 파싱할 텍스트 길이: {len(text) if isinstance(text, str) else '문자열이 아님'}")
+        # print(f"📝 파싱할 텍스트 타입: {type(text)}")
+        # print(f"📝 파싱할 텍스트 길이: {len(text) if isinstance(text, str) else '문자열이 아님'}")
         
         # text가 문자열이 아닌 경우 처리
         if not isinstance(text, str):
@@ -94,19 +94,19 @@ class AdminAPI:
                 print(f"📝 텍스트 내용: {text}")
             return []
         
-        print(f"📝 파싱할 텍스트 (처음 500자):\n{text[:500]}")
-        print(f"📝 파싱할 텍스트 (마지막 500자):\n{text[-500:]}")
+        # print(f"📝 파싱할 텍스트 (처음 500자):\n{text[:500]}")
+        # print(f"📝 파싱할 텍스트 (마지막 500자):\n{text[-500:]}")
         
         조문들 = []  # 파싱된 모든 조문을 저장할 리스트
         
         # 조문 패턴을 정규식으로 정의 - 텍스트 내 어디서든 찾을 수 있도록 수정
         조문_패턴 = re.compile(r"(제\d+(?:-\d+)?조(?:의\d+)?)\((.*?)\)")
         
-        print(f"📝 조문 패턴: {조문_패턴.pattern}")
+        # print(f"📝 조문 패턴: {조문_패턴.pattern}")
         
         # 전체 텍스트에서 조문 패턴을 찾아서 분할
         조문_매치들 = list(조문_패턴.finditer(text))
-        print(f"📝 발견된 조문 매치 수: {len(조문_매치들)}")
+        # print(f"📝 발견된 조문 매치 수: {len(조문_매치들)}")
         
         # 조문별로 내용 추출
         for i, 매치 in enumerate(조문_매치들):
@@ -125,9 +125,9 @@ class AdminAPI:
             # 조문 내용 추출
             내용 = text[현재_시작:다음_시작].strip()
             
-            print(f"📝 조문 {i+1}: {조번호}({제목})")
-            print(f"📝 내용 길이: {len(내용)}")
-            print(f"📝 내용 (처음 100자): {내용[:100]}")
+            # print(f"📝 조문 {i+1}: {조번호}({제목})")
+            # print(f"📝 내용 길이: {len(내용)}")
+            # print(f"📝 내용 (처음 100자): {내용[:100]}")
             
             조문들.append({
                 "조번호": 조번호,
@@ -135,7 +135,7 @@ class AdminAPI:
                 "내용": 내용
             })
         
-        print(f"📝 총 파싱된 조문 수: {len(조문들)}")
+        # print(f"📝 총 파싱된 조문 수: {len(조문들)}")
         
         return 조문들
     
