@@ -48,8 +48,6 @@
   - **프레임워크**: Streamlit
   - **AI 모델**: Google Gemini 2.0 Flash / 2.5 Flash
   - **검색/임베딩**: Scikit-learn (TF-IDF, Cosine Similarity)
-  - **데이터 처리**: Numpy, Pandas (내부적으로), PyMuPDF (PDF 파싱)
-  - **캐싱**: Pickle, Hashlib
 
 ### 아키텍처 흐름
 
