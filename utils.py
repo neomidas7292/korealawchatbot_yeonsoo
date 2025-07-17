@@ -167,17 +167,15 @@ class QueryPreprocessor:
     def generate_similar_questions(self, original_query: str) -> List[str]:
         """유사한 질문 생성"""
         prompt = f"""
-다음 질문과 유사한 의미를 가진 질문들을 5개 생성해주세요. 
+다음 질문과 유사한 의미를 가진 질문들을 3개 생성해주세요. 
 법령 검색에 도움이 되도록 다양한 표현과 용어를 사용해주세요.
 
 원본 질문: "{original_query}"
 
-유사 질문 5개를 다음 형식으로 생성해주세요:
+유사 질문 3개를 다음 형식으로 생성해주세요:
 1. (첫 번째 유사 질문)
 2. (두 번째 유사 질문)
 3. (세 번째 유사 질문)
-4. (네 번째 유사 질문)
-5. (다섯 번째 유사 질문)
 
 각 질문은 원본과 의미는 같지만 다른 표현이나 용어를 사용해주세요.
 """
@@ -194,7 +192,7 @@ class QueryPreprocessor:
                     questions.append(match.group(1))
             
             # 최대 5개까지만 반환
-            return questions[:5]
+            return questions[:3]
             
         except Exception as e:
             print(f"유사 질문 생성 오류: {e}")
@@ -203,15 +201,13 @@ class QueryPreprocessor:
 
 
 # 검색함수 (핵심키워드 및 유사어 활용)    
-def search_relevant_chunks(query, vectorizer, tfidf_matrix, text_chunks, top_k=3, threshold=0.01):
-    """단순화된 검색 함수"""
+def search_relevant_chunks(query, expanded_keywords, vectorizer, tfidf_matrix, text_chunks, top_k=3, threshold=0.01):
+    """단순화된 검색 함수 (사전 계산된 키워드 사용)"""
     
     try:
-        # 1. 쿼리 전처리
-        preprocessor = QueryPreprocessor()    
-        expanded_keywords = preprocessor.extract_keywords_and_synonyms(query)
+        # 1. 쿼리 전처리 로직이 제거됨 (API 호출 방지)
         
-        # 2. 원본 쿼리와 확장 키워드로 검색
+        # 2. 원본 쿼리와 미리 확장된 키워드로 검색
         search_queries = [query, expanded_keywords]
         
         # 3. 여러 검색으로 결과 수집
@@ -275,8 +271,8 @@ def get_model():
 def get_model_head():
     return genai.GenerativeModel('gemini-2.5-flash')
 
-async def get_law_agent_response_async(law_name, question, history, embedding_data, event_loop):
-    """법령별 에이전트 응답 (유사 질문 활용)"""
+async def get_law_agent_response_async(law_name, question, history, embedding_data, expanded_keywords, event_loop):
+    """법령별 에이전트 응답 (사전 계산된 키워드 및 단일 검색 활용)"""
     if law_name not in embedding_data:
         return law_name, "해당 법령 데이터를 찾을 수 없습니다."
     
@@ -284,21 +280,14 @@ async def get_law_agent_response_async(law_name, question, history, embedding_da
     if vec is None:
         return law_name, "해당 법령 데이터를 처리할 수 없습니다."
     
-    # 유사 질문 생성
-    preprocessor = QueryPreprocessor()
-    similar_questions = preprocessor.generate_similar_questions(question)
+    # 불필요한 유사 질문 생성 및 반복 검색 로직 제거
+    # 미리 생성된 키워드를 사용하여 관련 조항을 한 번만 검색
+    final_context = search_relevant_chunks(question, expanded_keywords, vec, mat, chunks)
     
-    # 원본 질문과 유사 질문들로 검색
-    all_contexts = []
-    for q in [question] + similar_questions:
-        context = search_relevant_chunks(q, vec, mat, chunks)
-        if context:
-            all_contexts.append(context)
-    
-    # 중복 제거하여 최종 컨텍스트 생성
-    unique_contexts = list(set(all_contexts))
-    final_context = "\n\n".join(unique_contexts)
-    
+    # final_context가 비어있을 경우, 답변할 내용이 없음을 명시
+    if not final_context:
+        return law_name, "관련 법령 조항을 찾을 수 없습니다."
+
     prompt = f"""
 당신은 대한민국 {law_name} 법률 전문가입니다.
 
@@ -327,10 +316,36 @@ async def get_law_agent_response_async(law_name, question, history, embedding_da
         return law_name, f"답변 생성 중 오류가 발생했습니다: {str(e)}"
 
 async def gather_agent_responses(question, history, law_data, embedding_data, event_loop):
-    """모든 에이전트 병렬 실행"""
-    tasks = [get_law_agent_response_async(name, question, history, embedding_data, event_loop)
-             for name in law_data]
-    return await asyncio.gather(*tasks)
+    """모든 에이전트 병렬 실행 (쿼리 확장 선행)"""
+    
+    # 1. & 2. 사용자 쿼리 분석 및 키워드 생성 (API 호출을 이 부분으로 집중)
+    preprocessor = QueryPreprocessor()
+    
+    # 1. 유사 쿼리 3개 생성 (API 호출 1회)
+    similar_questions = preprocessor.generate_similar_questions(question)
+    
+    # 2. 원본 + 유사 쿼리를 합쳐 키워드 및 유사어 생성 (API 호출 1회)
+    combined_query_text = " ".join([question] + similar_questions)
+    expanded_keywords = preprocessor.extract_keywords_and_synonyms(combined_query_text)
+    
+    # 3. 법령별 병렬 처리
+    # 각 에이전트에게 미리 생성된 확장 키워드를 전달
+    tasks = [
+        get_law_agent_response_async(
+            law_name=name, 
+            question=question, 
+            history=history, 
+            embedding_data=embedding_data, 
+            expanded_keywords=expanded_keywords,  # 생성된 키워드 전달
+            event_loop=event_loop
+        )
+        for name in law_data
+    ]
+    
+    responses = await asyncio.gather(*tasks)
+    
+    # main.py에서 출력할 수 있도록 중간 결과물들을 함께 반환
+    return responses, question, similar_questions, expanded_keywords
 
 def get_head_agent_response(responses, question, history):
     """헤드 에이전트 통합 답변"""

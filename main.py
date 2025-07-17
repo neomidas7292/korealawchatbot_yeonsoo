@@ -379,7 +379,8 @@ if user_input := st.chat_input("질문을 입력하세요"):
             history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
             
             try:
-                responses = st.session_state.event_loop.run_until_complete(
+                # 1. 수정된 gather_agent_responses의 반환값들을 모두 받습니다.
+                responses, original_query, similar_queries, expanded_keywords = st.session_state.event_loop.run_until_complete(
                     gather_agent_responses(
                         question=user_input,
                         history=history,
@@ -388,9 +389,22 @@ if user_input := st.chat_input("질문을 입력하세요"):
                         event_loop=st.session_state.event_loop
                     )
                 )
+                
+                # 2. 쿼리 분석 과정을 expander 내에 출력합니다.
+                with st.expander("🔍 쿼리 분석 과정 보기"):
+                    st.markdown(f"**원본 질문:**")
+                    st.info(original_query)
+                    st.markdown("**생성된 유사 질문:**")
+                    for q in similar_queries:
+                        st.markdown(f"- {q}")
+                    st.markdown(f"**추출된 키워드 및 유사어:**")
+                    st.success(expanded_keywords)
+
+                # 3. get_head_agent_response에는 기존과 같이 responses만 전달합니다.
                 answer = get_head_agent_response(responses, user_input, history)
                 st.markdown(answer)
                 st.session_state.chat_history.append({"role": "assistant", "content": answer})
+
             except Exception as e:
                 error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
                 st.error(error_msg)
