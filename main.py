@@ -12,6 +12,7 @@ from pathlib import Path
 from pdf_json import convert_pdf_to_json, validate_json_structure, preview_json_data, download_json_file
 from lawapi import LawAPI, convert_law_data_to_chatbot_format
 from adminapi import AdminAPI, convert_admin_rule_data_to_chatbot_format
+from law_article_search import render_law_search_ui
 
 # 분리된 핵심 로직 함수들을 utils.py에서 가져옵니다.
 from utils import (
@@ -358,54 +359,76 @@ with st.sidebar:
         st.info(f"현재 대화 수: {len([msg for msg in st.session_state.chat_history if msg['role'] == 'user'])}개")
 
 # --- UI: 메인 ---
-if st.session_state.law_data:
-    st.info(f"현재 {len(st.session_state.law_data)}개의 법령이 처리되어 사용 가능합니다: {', '.join(st.session_state.law_data.keys())}")
+# 탭으로 챗봇과 검색 기능 분리
+tab1, tab2 = st.tabs(["💬 AI 챗봇", "🔍 법령 검색"])
 
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg['role']):
-        st.markdown(msg['content'])
+with tab1:
+    if st.session_state.law_data:
+        st.info(f"현재 {len(st.session_state.law_data)}개의 법령이 처리되어 사용 가능합니다: {', '.join(st.session_state.law_data.keys())}")
 
-if user_input := st.chat_input("질문을 입력하세요"):
-    if not st.session_state.law_data:
-        st.warning("먼저 사이드바에서 법령 데이터를 수집하고 처리해주세요.")
-        st.stop()
-    
-    st.session_state.chat_history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
-    
-    with st.chat_message("assistant"):
-        with st.spinner("답변 생성 중..."):
-            history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
-            
-            try:
-                # 1. 수정된 gather_agent_responses의 반환값들을 모두 받습니다.
-                responses, original_query, similar_queries, expanded_keywords = st.session_state.event_loop.run_until_complete(
-                    gather_agent_responses(
-                        question=user_input,
-                        history=history,
-                        law_data=st.session_state.law_data,
-                        embedding_data=st.session_state.embedding_data,
-                        event_loop=st.session_state.event_loop
-                    )
-                )
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+    if user_input := st.chat_input("질문을 입력하세요"):
+        if not st.session_state.law_data:
+            st.warning("먼저 사이드바에서 법령 데이터를 수집하고 처리해주세요.")
+            st.stop()
+        
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        
+        with st.chat_message("assistant"):
+            with st.spinner("답변 생성 중..."):
+                history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
                 
-                # 2. 쿼리 분석 과정을 expander 내에 출력합니다.
-                with st.expander("🔍 쿼리 분석 과정 보기"):
-                    st.markdown(f"**원본 질문:**")
-                    st.info(original_query)
-                    st.markdown("**생성된 유사 질문:**")
-                    for q in similar_queries:
-                        st.markdown(f"- {q}")
-                    st.markdown(f"**추출된 키워드 및 유사어:**")
-                    st.success(expanded_keywords)
+                try:
+                    # 1. 수정된 gather_agent_responses의 반환값들을 모두 받습니다.
+                    responses, original_query, similar_queries, expanded_keywords = st.session_state.event_loop.run_until_complete(
+                        gather_agent_responses(
+                            question=user_input,
+                            history=history,
+                            law_data=st.session_state.law_data,
+                            embedding_data=st.session_state.embedding_data,
+                            event_loop=st.session_state.event_loop
+                        )
+                    )
+                    
+                    # 2. 쿼리 분석 과정을 expander 내에 출력합니다.
+                    with st.expander("🔍 쿼리 분석 과정 보기"):
+                        st.markdown(f"**원본 질문:**")
+                        st.info(original_query)
+                        st.markdown("**생성된 유사 질문:**")
+                        for q in similar_queries:
+                            st.markdown(f"- {q}")
+                        st.markdown(f"**추출된 키워드 및 유사어:**")
+                        st.success(expanded_keywords)
 
-                # 3. get_head_agent_response에는 기존과 같이 responses만 전달합니다.
-                answer = get_head_agent_response(responses, user_input, history)
-                st.markdown(answer)
-                st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                    # 3. get_head_agent_response에는 기존과 같이 responses만 전달합니다.
+                    answer = get_head_agent_response(responses, user_input, history)
+                    st.markdown(answer)
+                    # 각 AI 에이전트 답변 보기
+                    with st.expander("🤖 각 AI 에이전트 답변 보기"):
+                        if isinstance(responses, dict):
+                            for law_name, response in responses.items():
+                                st.markdown(f"**📚 {law_name}**")
+                                st.markdown(response)
+                                st.markdown("---")
+                        elif isinstance(responses, list):
+                            for i, response in enumerate(responses):
+                                law_names = list(st.session_state.law_data.keys())
+                                law_name = law_names[i] if i < len(law_names) else f"에이전트 {i+1}"
+                                st.markdown(f"**📚 {law_name}**")
+                                st.markdown(response)
+                                st.markdown("---")
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
-            except Exception as e:
-                error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
-                st.error(error_msg)
-                st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+                except Exception as e:
+                    error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
+                    st.error(error_msg)
+                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+
+with tab2:
+    render_law_search_ui(st.session_state.collected_laws)
+
