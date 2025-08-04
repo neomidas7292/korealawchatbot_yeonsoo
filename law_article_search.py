@@ -109,7 +109,11 @@ def display_search_results(results):
             # 조문 내용 (하이라이트 적용)
             if '내용' in result['article'] and result['article']['내용']:
                 st.markdown("**내용:**")
-                st.markdown(result['matched_content'], unsafe_allow_html=True)
+                formatted = result['matched_content'].replace('\n', '<br>')
+                st.markdown(
+                    f"<div style='white-space: pre-wrap;'>{formatted}</div>",
+                    unsafe_allow_html=True,
+                )
             
             st.markdown("</div>", unsafe_allow_html=True)
 
