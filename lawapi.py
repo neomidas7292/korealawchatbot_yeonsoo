@@ -2,6 +2,7 @@ import requests
 import xml.etree.ElementTree as ET
 import json
 import os
+import logging
 from typing import Optional, Tuple, List, Dict
 import streamlit as st
 
@@ -47,10 +48,11 @@ class LawAPI:
 
         except Exception as e:
             # 에러 발생 시 서버에서 받은 실제 응답을 출력 (가능한 경우에만)
-            if response is not None:
+            if response is not None and hasattr(response, "text"):
                 print("===== API 서버 실제 응답 내용 =====")
                 print(response.text)
                 print("===================================")
+            logging.exception("법령 검색 중 오류 발생")
             st.error(f"법령 검색 중 오류 발생: {str(e)}")
             return None, None
     
