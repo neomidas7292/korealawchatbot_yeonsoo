@@ -31,25 +31,26 @@ class LawAPI:
             "type": "XML",
             "query": query
         }
-        
+
+        response = None
         try:
             response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
-            
+
             root = ET.fromstring(response.content)
             law = root.find("law")
-            
+
             if law is None:
                 return None, None
-            
+
             return law.findtext("법령ID"), law.findtext("법령명한글")
-        
+
         except Exception as e:
-                # ✅ 추가된 디버깅 코드
-            # 에러가 발생했을 때 서버가 보낸 실제 응답 내용을 출력합니다.
-            print("===== API 서버 실제 응답 내용 =====")
-            print(response.text)
-            print("===================================")
+            # 에러 발생 시 서버에서 받은 실제 응답을 출력 (가능한 경우에만)
+            if response is not None:
+                print("===== API 서버 실제 응답 내용 =====")
+                print(response.text)
+                print("===================================")
             st.error(f"법령 검색 중 오류 발생: {str(e)}")
             return None, None
     
