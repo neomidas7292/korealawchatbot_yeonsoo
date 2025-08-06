@@ -8,6 +8,9 @@ import asyncio
 import concurrent.futures
 from pathlib import Path
 
+import threading
+import queue
+
 # 로컬 유틸리티 및 API 모듈을 가져옵니다.
 from pdf_json import convert_pdf_to_json, validate_json_structure, preview_json_data, download_json_file
 from lawapi import LawAPI, convert_law_data_to_chatbot_format
@@ -15,12 +18,15 @@ from adminapi import AdminAPI, convert_admin_rule_data_to_chatbot_format
 from law_article_search import render_law_search_ui
 
 # 분리된 핵심 로직 함수들을 utils.py에서 가져옵니다.
+# main.py의 import 수정
 from utils import (
     process_single_file,
     process_json_data,
-    gather_agent_responses,
-    get_head_agent_response
+    analyze_query,
+    get_agent_response,  # 개별 법령 답변 (일반)
+    get_head_agent_response_stream  # 최종 통합 답변 (스트리밍)
 )
+
 
 # --- 환경 변수 및 Gemini API 설정 ---
 load_dotenv()
@@ -359,6 +365,27 @@ with st.sidebar:
         st.info(f"현재 대화 수: {len([msg for msg in st.session_state.chat_history if msg['role'] == 'user'])}개")
 
 # --- UI: 메인 ---
+st.markdown("""
+### 🚀 사용 방법
+1.  **법령 데이터 준비 (사이드바)**
+    *   **파일 업로드**: 가지고 있는 법령 PDF 또는 JSON 파일을 업로드합니다. PDF는 자동으로 텍스트가 추출되어 JSON으로 변환됩니다.
+    *   **법률 API / 행정규칙 API**: 찾고 싶은 법령의 이름을 입력하여 국가법령정보센터 API를 통해 직접 다운로드합니다.
+    *   사이드바에 수집된 법령 목록을 확인하고, 필요 없는 항목은 삭제할 수 있습니다.
+
+2.  **챗봇용 데이터 변환**
+    *   데이터 준비가 완료되면, 사이드바의 **[🔄 챗봇용 데이터 변환]** 버튼을 꼭 눌러주세요.
+    *   이 과정은 수집된 법령들을 AI가 이해할 수 있는 형태(벡터 임베딩)로 변환하며, 이 과정이 없으면 AI 챗봇이 작동하지 않습니다.
+
+3.  **AI 챗봇 사용**
+    *   **[💬 AI 챗봇]** 탭으로 이동합니다.
+    *   처리된 법령을 기반으로 궁금한 점을 자유롭게 질문하세요. AI가 법령 조항을 근거로 답변을 생성합니다.
+
+4.  **법령 원문 검색**
+    *   **[🔍 법령 검색]** 탭으로 이동합니다.
+    *   수집된 모든 법령의 원문에서 특정 키워드를 직접 검색하고 싶을 때 사용합니다.
+""")
+st.markdown("---")
+
 # 탭으로 챗봇과 검색 기능 분리
 tab1, tab2 = st.tabs(["💬 AI 챗봇", "🔍 법령 검색"])
 
@@ -379,56 +406,77 @@ with tab1:
         with st.chat_message("user"):
             st.markdown(user_input)
         
+        # 챗봇 답변 생성 로직 교체
         with st.chat_message("assistant"):
-            with st.spinner("답변 생성 중..."):
-                history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
-                
-                try:
-                    # 1. 수정된 gather_agent_responses의 반환값들을 모두 받습니다.
-                    responses, original_query, similar_queries, expanded_keywords = st.session_state.event_loop.run_until_complete(
-                        gather_agent_responses(
-                            question=user_input,
-                            history=history,
-                            law_data=st.session_state.law_data,
-                            embedding_data=st.session_state.embedding_data,
-                            event_loop=st.session_state.event_loop
-                        )
-                    )
+            answer = None
+            full_answer = ""  # 스트리밍된 전체 답변 저장용
+            
+            try:
+                with st.status("답변 생성 중...", expanded=True) as status:
+                    history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
                     
-                    # 2. 쿼리 분석 과정을 expander 내에 출력합니다.
-                    with st.expander("🔍 쿼리 분석 과정 보기"):
-                        st.markdown(f"**원본 질문:**")
-                        st.info(original_query)
-                        st.markdown("**생성된 유사 질문:**")
-                        for q in similar_queries:
-                            st.markdown(f"- {q}")
-                        st.markdown(f"**추출된 키워드 및 유사어:**")
-                        st.success(expanded_keywords)
+                    # 1. 질문 분석
+                    status.update(label="1/3: 질문 분석 중...", state="running")
+                    original_query, similar_queries, expanded_keywords = analyze_query(user_input)
+                    
+                    with st.expander("🔍 쿼리 분석 결과"):
+                        st.markdown(f"**원본 질문:** {original_query}")
+                        st.markdown("**유사 질문:**")
+                        st.markdown('\n'.join([f'- {q}' for q in similar_queries]))
+                        st.markdown(f"**확장 키워드:** {expanded_keywords}")
 
-                    # 3. get_head_agent_response에는 기존과 같이 responses만 전달합니다.
-                    answer = get_head_agent_response(responses, user_input, history)
-                    st.markdown(answer)
-                    # 각 AI 에이전트 답변 보기
-                    with st.expander("🤖 각 AI 에이전트 답변 보기"):
-                        if isinstance(responses, dict):
-                            for law_name, response in responses.items():
+                    # 2. 법령별 답변 생성 (병렬 처리, 스트리밍 없음)
+                    status.update(label="2/3: 법령별 답변 생성 중...", state="running")
+                    
+                    law_names = list(st.session_state.law_data.keys())
+                    
+                    # ThreadPoolExecutor로 병렬 처리
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(law_names)) as executor:
+                        futures = {
+                            executor.submit(
+                                get_agent_response,
+                                law_name, user_input, history, st.session_state.embedding_data, expanded_keywords
+                            ): law_name for law_name in law_names
+                        }
+                        
+                        agent_responses = []
+                        for future in concurrent.futures.as_completed(futures):
+                            law_name, response = future.result()
+                            agent_responses.append((law_name, response))
+                            
+                            # 완료된 법령별 답변을 바로 표시
+                            with st.container():
                                 st.markdown(f"**📚 {law_name}**")
                                 st.markdown(response)
-                                st.markdown("---")
-                        elif isinstance(responses, list):
-                            for i, response in enumerate(responses):
-                                law_names = list(st.session_state.law_data.keys())
-                                law_name = law_names[i] if i < len(law_names) else f"에이전트 {i+1}"
-                                st.markdown(f"**📚 {law_name}**")
-                                st.markdown(response)
-                                st.markdown("---")
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
-                except Exception as e:
-                    error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+                    # 3. 최종 답변 종합 (스트리밍)
+                    status.update(label="3/3: 최종 답변 종합 중...", state="running")
+                    status.update(label="✅ 최종 답변 생성 중... (실시간)", state="complete", expanded=False)
+
+                # 최종 답변 스트리밍 표시
+                st.markdown("---")
+                st.markdown("### 🎯 **최종 통합 답변**")
+                
+                # 스트리밍 답변 표시용 플레이스홀더
+                answer_placeholder = st.empty()
+                
+                # 스트리밍 답변 생성 및 표시
+                for chunk in get_head_agent_response_stream(agent_responses, user_input, history):
+                    full_answer += chunk
+                    # 실시간으로 답변 업데이트 (타이핑 효과)
+                    answer_placeholder.markdown(full_answer + " ▌")
+                
+                # 최종 완성된 답변 표시 (커서 제거)
+                answer_placeholder.markdown(full_answer)
+                
+                # 세션 히스토리에 저장
+                if full_answer:
+                    st.session_state.chat_history.append({"role": "assistant", "content": full_answer})
+
+            except Exception as e:
+                error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
+                st.error(error_msg)
+                st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
 
 with tab2:
     render_law_search_ui(st.session_state.collected_laws)
-
