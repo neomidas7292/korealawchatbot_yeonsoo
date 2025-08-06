@@ -1,6 +1,6 @@
 # 필요한 모듈들을 가져옵니다.
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 import os
 import json
@@ -27,7 +27,7 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 LAW_API_KEY = os.getenv('LAW_API_KEY')
 ADMIN_API_KEY = os.getenv('ADMIN_API_KEY')
-genai.configure(api_key=GOOGLE_API_KEY)
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # Streamlit 페이지 설정
 st.set_page_config(

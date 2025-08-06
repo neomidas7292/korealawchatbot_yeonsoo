@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 import os
 import json
 import asyncio
@@ -129,7 +129,8 @@ class QueryPreprocessor:
     """사용자 쿼리 전처리 및 유사어 생성 클래스"""
     
     def __init__(self):
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
+        GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+        self.client = genai.Client(api_key=GOOGLE_API_KEY)
         
     def extract_keywords_and_synonyms(self, query: str) -> str:
         """키워드 추출 및 유사어 생성 - 단순화된 버전"""
@@ -151,7 +152,10 @@ class QueryPreprocessor:
 """
         
         try:
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
             # 응답에서 키워드들만 추출
             keywords_text = response.text.strip()
             # 불필요한 문자 제거하고 단어들만 추출
@@ -181,7 +185,10 @@ class QueryPreprocessor:
 """
         
         try:
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
             # 응답에서 질문들 추출
             questions = []
             lines = response.text.strip().split('\n')
@@ -266,10 +273,14 @@ def process_json_data(file_name, json_data):
 
 # Gemini 모델 반환
 def get_model():
-    return genai.GenerativeModel('gemini-2.0-flash')
+    GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    return client
 
 def get_model_head():
-    return genai.GenerativeModel('gemini-2.5-flash')
+    GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    return client
 
 async def get_law_agent_response_async(law_name, question, history, embedding_data, expanded_keywords, event_loop):
     """법령별 에이전트 응답 (사전 계산된 키워드 및 단일 검색 활용)"""
@@ -307,10 +318,16 @@ async def get_law_agent_response_async(law_name, question, history, embedding_da
 5. 법령 조항 번호와 제목을 정확히 인용하여 신뢰성을 높여주세요.
 """
     
-    model = get_model()
+    client = get_model()
     try:
         with ThreadPoolExecutor() as pool:
-            res = await event_loop.run_in_executor(pool, lambda: model.generate_content(prompt))
+            res = await event_loop.run_in_executor(
+                pool, 
+                lambda: client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt
+                )
+            )
         return law_name, res.text
     except Exception as e:
         return law_name, f"답변 생성 중 오류가 발생했습니다: {str(e)}"
@@ -370,6 +387,11 @@ def get_head_agent_response(responses, question, history):
 7. 상충되는 내용이 있는 경우 이를 명확히 구분하여 설명합니다.
 """
     try:
-        return get_model_head().generate_content(prompt).text
+        client = get_model_head()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        return response.text
     except Exception as e:
         return f"답변 생성 중 오류가 발생했습니다: {str(e)}"

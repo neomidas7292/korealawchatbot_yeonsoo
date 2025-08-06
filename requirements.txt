@@ -1,6 +1,6 @@
 streamlit 
 scikit-learn 
-google-generativeai 
+google-genai
 numpy
 python-dotenv
 pdfminer.six
