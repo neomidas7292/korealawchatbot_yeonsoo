@@ -119,11 +119,11 @@ def process_all_collected_laws():
         for name, law_info in st.session_state.collected_laws.items():
             json_data = law_info['data']
             result = process_json_data(name, json_data)
-            processed_name, vec, mat, chunks, chunk_count = result
+            processed_name, vec, title_vec, mat, title_mat, chunks, chunk_count = result
             
             if vec is not None:
                 st.session_state.law_data[processed_name] = "processed"
-                st.session_state.embedding_data[processed_name] = (vec, mat, chunks)
+                st.session_state.embedding_data[processed_name] = (vec, title_vec, mat, title_mat, chunks)
                 st.success(f"✅ {processed_name} 처리 완료 ({chunk_count}개 조항)")
             else:
                 st.error(f"❌ {processed_name} 처리 실패")
@@ -365,25 +365,27 @@ with st.sidebar:
         st.info(f"현재 대화 수: {len([msg for msg in st.session_state.chat_history if msg['role'] == 'user'])}개")
 
 # --- UI: 메인 ---
-st.markdown("""
-### 🚀 사용 방법
-1.  **법령 데이터 준비 (사이드바)**
-    *   **파일 업로드**: 가지고 있는 법령 PDF 또는 JSON 파일을 업로드합니다. PDF는 자동으로 텍스트가 추출되어 JSON으로 변환됩니다.
-    *   **법률 API / 행정규칙 API**: 찾고 싶은 법령의 이름을 입력하여 국가법령정보센터 API를 통해 직접 다운로드합니다.
-    *   사이드바에 수집된 법령 목록을 확인하고, 필요 없는 항목은 삭제할 수 있습니다.
+# 사용 방법을 접이식 패널로 변경
+with st.expander("🚀 사용 방법", expanded=False):
+    st.markdown("""
+**1. 법령 데이터 준비 (사이드바)**
+* **파일 업로드**: 가지고 있는 법령 PDF 또는 JSON 파일을 업로드합니다. PDF는 자동으로 텍스트가 추출되어 JSON으로 변환됩니다.
+* **법률 API / 행정규칙 API**: 찾고 싶은 법령의 이름을 입력하여 국가법령정보센터 API를 통해 직접 다운로드합니다.
+* 사이드바에 수집된 법령 목록을 확인하고, 필요 없는 항목은 삭제할 수 있습니다.
 
-2.  **챗봇용 데이터 변환**
-    *   데이터 준비가 완료되면, 사이드바의 **[🔄 챗봇용 데이터 변환]** 버튼을 꼭 눌러주세요.
-    *   이 과정은 수집된 법령들을 AI가 이해할 수 있는 형태(벡터 임베딩)로 변환하며, 이 과정이 없으면 AI 챗봇이 작동하지 않습니다.
+**2. 챗봇용 데이터 변환**
+* 데이터 준비가 완료되면, 사이드바의 **[🔄 챗봇용 데이터 변환]** 버튼을 꼭 눌러주세요.
+* 이 과정은 수집된 법령들을 AI가 이해할 수 있는 형태(벡터 임베딩)로 변환하며, 이 과정이 없으면 AI 챗봇이 작동하지 않습니다.
 
-3.  **AI 챗봇 사용**
-    *   **[💬 AI 챗봇]** 탭으로 이동합니다.
-    *   처리된 법령을 기반으로 궁금한 점을 자유롭게 질문하세요. AI가 법령 조항을 근거로 답변을 생성합니다.
+**3. AI 챗봇 사용**
+* **[💬 AI 챗봇]** 탭으로 이동합니다.
+* 처리된 법령을 기반으로 궁금한 점을 자유롭게 질문하세요. AI가 법령 조항을 근거로 답변을 생성합니다.
 
-4.  **법령 원문 검색**
-    *   **[🔍 법령 검색]** 탭으로 이동합니다.
-    *   수집된 모든 법령의 원문에서 특정 키워드를 직접 검색하고 싶을 때 사용합니다.
-""")
+**4. 법령 원문 검색**
+* **[🔍 법령 검색]** 탭으로 이동합니다.
+* 수집된 모든 법령의 원문에서 특정 키워드를 직접 검색하고 싶을 때 사용합니다.
+    """)
+
 st.markdown("---")
 
 # 탭으로 챗봇과 검색 기능 분리
@@ -393,10 +395,14 @@ with tab1:
     if st.session_state.law_data:
         st.info(f"현재 {len(st.session_state.law_data)}개의 법령이 처리되어 사용 가능합니다: {', '.join(st.session_state.law_data.keys())}")
 
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg['role']):
-            st.markdown(msg['content'])
+    # 대화 히스토리 표시
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg['role']):
+                st.markdown(msg['content'])
 
+    # 질문 입력창을 대화 끝나고 맨 아래 배치
     if user_input := st.chat_input("질문을 입력하세요"):
         if not st.session_state.law_data:
             st.warning("먼저 사이드바에서 법령 데이터를 수집하고 처리해주세요.")
@@ -415,9 +421,9 @@ with tab1:
                 with st.status("답변 생성 중...", expanded=True) as status:
                     history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
                     
-                    # 1. 질문 분석
+                    # 1. 질문 분석 (법령 제목 용어 활용)
                     status.update(label="1/3: 질문 분석 중...", state="running")
-                    original_query, similar_queries, expanded_keywords = analyze_query(user_input)
+                    original_query, similar_queries, expanded_keywords = analyze_query(user_input, st.session_state.collected_laws)
                     
                     with st.expander("🔍 쿼리 분석 결과"):
                         st.markdown(f"**원본 질문:** {original_query}")

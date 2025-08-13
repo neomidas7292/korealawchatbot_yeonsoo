@@ -258,39 +258,3 @@ def convert_admin_rule_data_to_chatbot_format(rule_data: Dict) -> List[Dict]:
         chatbot_data.append(chatbot_item)
     
     return chatbot_data
-
-if __name__ == "__main__":
-    # Streamlit을 사용하지 않는 환경을 위한 Mock 객체 (없으면 에러 방지)
-    class MockStreamlit:
-        def error(self, message): print(f"ERROR: {message}")
-        def info(self, message): print(f"INFO: {message}")
-        def success(self, message): print(f"SUCCESS: {message}")
-        def json(self, data): print(json.dumps(data, indent=2, ensure_ascii=False)) # JSON 예쁘게 출력
-        def write(self, message): print(message)
-
-    if 'st' not in locals():
-        st = MockStreamlit()
-
-    # --- 설정 ---
-    oc_key = "yschoi0817" # <-- 여기에 당신의 API 키를 넣으세요!
-    search_query = "외국환거래규정"
-
-    # --- 실행 ---
-    if oc_key == "":
-        st.error("⚠️ API 키를 입력해야 합니다.")
-    else:
-        admin_api = AdminAPI(oc_key)
-        st.info(f"'{search_query}' 검색 중...")
-        
-        cleaned_data = admin_api.download_admin_rule_as_json(search_query)
-        
-        if cleaned_data:
-            st.success(f"'{search_query}' 다운로드 및 정제 완료!")
-            st.json(cleaned_data)
-            
-            # 챗봇 형식으로 변환된 데이터 첫 5개 조문만 출력
-            chatbot_format_data = convert_admin_rule_data_to_chatbot_format(cleaned_data)
-            st.info("\n--- 챗봇 형식 데이터 (일부) ---")
-            st.json(chatbot_format_data[:5]) 
-        else:
-            st.error(f"'{search_query}' 검색 실패.")
