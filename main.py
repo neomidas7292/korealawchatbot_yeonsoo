@@ -62,6 +62,9 @@ if 'api_downloaded_admins' not in st.session_state:
 # 새로 추가: 수집된 법률 데이터 통합 관리
 if 'collected_laws' not in st.session_state:
     st.session_state.collected_laws = {}  # {name: {'type': 'pdf/law_api/admin_api', 'data': json_data}}
+# 검색 가중치 설정
+if 'search_weights' not in st.session_state:
+    st.session_state.search_weights = {'content': 0.5, 'title': 0.5}  # 기본값: 50/50
 
 # --- 함수 정의 ---
 def start_new_chat():
@@ -363,6 +366,7 @@ with st.sidebar:
     # 대화 수 표시
     if st.session_state.chat_history:
         st.info(f"현재 대화 수: {len([msg for msg in st.session_state.chat_history if msg['role'] == 'user'])}개")
+    
 
 # --- UI: 메인 ---
 # 사용 방법을 접이식 패널로 변경
@@ -377,14 +381,48 @@ with st.expander("🚀 사용 방법", expanded=False):
 * 데이터 준비가 완료되면, 사이드바의 **[🔄 챗봇용 데이터 변환]** 버튼을 꼭 눌러주세요.
 * 이 과정은 수집된 법령들을 AI가 이해할 수 있는 형태(벡터 임베딩)로 변환하며, 이 과정이 없으면 AI 챗봇이 작동하지 않습니다.
 
-**3. AI 챗봇 사용**
+**3. 검색 설정 (아래 패널)**
+* **🤝 조문제목+내용 균형 모드 (기본)**: 조문의 제목과 내용을 모두 고려하여 검색합니다. 대부분의 법령에서 권장됩니다.
+* **📄 내용 전용 모드**: 조문 제목을 무시하고 내용만으로 검색합니다. 제목이 형식적이거나 검색에 도움이 되지 않는 법령(예: 외국환거래법)에 적합합니다.
+* 필요에 따라 검색 전략을 변경하여 더 정확한 답변을 받을 수 있습니다.
+
+**4. AI 챗봇 사용**
 * **[💬 AI 챗봇]** 탭으로 이동합니다.
 * 처리된 법령을 기반으로 궁금한 점을 자유롭게 질문하세요. AI가 법령 조항을 근거로 답변을 생성합니다.
 
-**4. 법령 원문 검색**
+**5. 법령 원문 검색**
 * **[🔍 법령 검색]** 탭으로 이동합니다.
 * 수집된 모든 법령의 원문에서 특정 키워드를 직접 검색하고 싶을 때 사용합니다.
     """)
+
+# 검색 설정 패널 (사용방법 아래로 이동)
+with st.expander("⚙️ 검색 설정", expanded=True):
+    # st.caption("법령 검색 전략을 선택하세요.")
+    
+    # 검색 모드 선택
+    search_mode = st.radio(
+        "🔍 사용자 질문과 유사도가 높은 조문 검색 모드 선택",
+        options=["🤝 조문제목+내용 균형 모드", "📄 내용 전용 모드 (예: 외국환거래법 및 하위규정)"],
+        index=1 if st.session_state.search_weights['title'] == 0.0 else 0,
+        help="균형 모드: 제목과 내용을 50:50으로 검색 | 내용 전용: 제목을 무시하고 내용만 검색"
+    )
+    
+    # 선택에 따라 가중치 설정
+    if search_mode == "📄 내용 전용 모드 (예: 외국환거래법 및 하위규정)":
+        title_weight = 0.0
+        content_weight = 1.0
+    else:
+        title_weight = 0.5
+        content_weight = 0.5
+    
+    
+    # 세션 상태 업데이트
+    if st.session_state.search_weights['title'] != title_weight:
+        st.session_state.search_weights = {
+            'content': content_weight,
+            'title': title_weight
+        }
+        st.success(f"검색 모드가 변경되었습니다: {search_mode}")
 
 st.markdown("---")
 
@@ -394,6 +432,7 @@ tab1, tab2 = st.tabs(["💬 AI 챗봇", "🔍 법령 검색"])
 with tab1:
     if st.session_state.law_data:
         st.info(f"현재 {len(st.session_state.law_data)}개의 법령이 처리되어 사용 가능합니다: {', '.join(st.session_state.law_data.keys())}")
+        
 
     # 대화 히스토리 표시
     chat_container = st.container()
@@ -421,9 +460,12 @@ with tab1:
                 with st.status("답변 생성 중...", expanded=True) as status:
                     history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
                     
+                    # 사용자 설정 가중치 가져오기
+                    search_weights = st.session_state.search_weights
+                    
                     # 1. 질문 분석 (법령 제목 용어 활용)
                     status.update(label="1/3: 질문 분석 중...", state="running")
-                    original_query, similar_queries, expanded_keywords = analyze_query(user_input, st.session_state.collected_laws)
+                    original_query, similar_queries, expanded_keywords = analyze_query(user_input, st.session_state.collected_laws, search_weights)
                     
                     with st.expander("🔍 쿼리 분석 결과"):
                         st.markdown(f"**원본 질문:** {original_query}")
@@ -441,7 +483,7 @@ with tab1:
                         futures = {
                             executor.submit(
                                 get_agent_response,
-                                law_name, user_input, history, st.session_state.embedding_data, expanded_keywords
+                                law_name, user_input, history, st.session_state.embedding_data, expanded_keywords, search_weights
                             ): law_name for law_name in law_names
                         }
                         

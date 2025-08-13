@@ -206,12 +206,17 @@ class QueryPreprocessor:
         
         return ' '.join(list(set(cleaned_words)))  # 중복 제거
         
-    def extract_keywords_and_synonyms(self, query: str) -> str:
-        """키워드 추출 및 유사어 생성 - 법령 제목 용어 우선 활용"""
-        # 법령 제목 용어들을 프롬프트에 포함
-        title_terms_text = ', '.join(self.title_terms[:50]) if self.title_terms else '없음'
+    def extract_keywords_and_synonyms(self, query: str, search_weights=None) -> str:
+        """키워드 추출 및 유사어 생성 - 제목 가중치 설정에 따라 다른 전략 사용"""
         
-        prompt = f"""
+        # 제목 가중치 확인
+        title_weight = search_weights.get('title', 0.5) if search_weights else 0.5
+        
+        if title_weight > 0.0:
+            # 제목을 활용하는 경우: 기존 방식
+            title_terms_text = ', '.join(self.title_terms[:50]) if self.title_terms else '없음'
+            
+            prompt = f"""
 당신은 대한민국 법령 전문가입니다. 다음 질문을 분석하여 검색에 도움이 되는 키워드를 생성해주세요.
 
 질문: "{query}"
@@ -222,6 +227,23 @@ class QueryPreprocessor:
 다음 작업을 수행해주세요:
 1. 질문에서 핵심 키워드 추출
 2. 반드시 위 법령 제목 용어들 중에서 핵심 키워드를 우선적으로 선택
+
+응답 형식: 키워드와 유사어들을 공백으로 구분하여 한 줄로 나열해주세요.
+예시: 근로시간 임금지급 연차휴가 근로 근무 노동 임금 급여 휴가 연차
+
+단어들만 나열하고 다른 설명은 하지 마세요.
+"""
+        else:
+            # 제목을 무시하는 경우: 내용 중심 키워드 추출
+            prompt = f"""
+당신은 대한민국 법령 전문가입니다. 다음 질문을 분석하여 검색에 도움이 되는 키워드를 생성해주세요.
+
+질문: "{query}"
+
+다음 작업을 수행해주세요:
+1. 질문에서 핵심 키워드 추출
+2. 관련 동의어와 유사어 생성
+3. 법령 검색에 유용한 관련 용어들 추가
 
 응답 형식: 키워드와 유사어들을 공백으로 구분하여 한 줄로 나열해주세요.
 예시: 근로시간 임금지급 연차휴가 근로 근무 노동 임금 급여 휴가 연차
@@ -249,12 +271,17 @@ class QueryPreprocessor:
             fallback_keywords = re.findall(r'[가-힣]{2,}', query)
             return self.clean_keywords_with_stopwords(' '.join(fallback_keywords))
     
-    def generate_similar_questions(self, original_query: str) -> List[str]:
-        """유사한 질문 생성 - 법령 제목 용어 우선 활용"""
-        # 법령 제목 용어들을 프롬프트에 포함
-        title_terms_text = ', '.join(self.title_terms) if self.title_terms else '없음'
+    def generate_similar_questions(self, original_query: str, search_weights=None) -> List[str]:
+        """유사한 질문 생성 - 제목 가중치 설정에 따라 다른 전략 사용"""
         
-        prompt = f"""
+        # 제목 가중치 확인
+        title_weight = search_weights.get('title', 0.5) if search_weights else 0.5
+        
+        if title_weight > 0.0:
+            # 제목을 활용하는 경우: 기존 방식
+            title_terms_text = ', '.join(self.title_terms) if self.title_terms else '없음'
+            
+            prompt = f"""
 원본 질문: "{original_query}"
 
 [법령 제목 용어]: {title_terms_text}
@@ -274,6 +301,27 @@ class QueryPreprocessor:
 예시 - 원본: "수입 원재료로 생산한 국내물품의 원산지 판정 기준은?"
 → 1. 국내생산물품등의 원산지 판정 기준은?
 → 2. 국내생산물품등의 원산지 기준은?
+"""
+        else:
+            # 제목을 무시하는 경우: 내용 중심 유사질문 생성
+            prompt = f"""
+원본 질문: "{original_query}"
+
+원본 질문의 핵심 의미를 유지하면서 다른 표현으로 짧고 간결한 유사 질문 2개를 생성하세요.
+
+생성 규칙:
+1. 15단어 이내의 간결한 질문
+2. 핵심 내용만 포함, 부연설명 제거  
+3. "~인가?", "~은?", "~기준은?" 등 단순 형태
+4. 동의어나 유사한 표현 활용
+
+형식:
+1. (간결한 유사질문)
+2. (간결한 유사질문)
+
+예시 - 원본: "근로시간은 어떻게 계산하나요?"
+→ 1. 근무시간 산정 방법은?
+→ 2. 노동시간 계산 기준은?
 """
         
         try:
@@ -300,8 +348,21 @@ class QueryPreprocessor:
 
 
 # 검색함수 (핵심키워드 및 유사어 활용)    
-def search_relevant_chunks(query, expanded_keywords, vectorizer, title_vectorizer, tfidf_matrix, title_matrix, text_chunks, top_k=3, threshold=0.01):
-    """제목과 전체 내용을 모두 고려한 검색 함수 (가중평균 적용)"""
+def search_relevant_chunks(query, expanded_keywords, vectorizer, title_vectorizer, tfidf_matrix, title_matrix, text_chunks, top_k=3, threshold=0.01, search_weights=None):
+    """제목과 전체 내용을 모두 고려한 검색 함수 (사용자 정의 가중치 적용)"""
+    
+    # 기본 가중치 설정 (안전한 처리)
+    try:
+        if search_weights is None or not isinstance(search_weights, dict):
+            content_weight = 0.5
+            title_weight = 0.5
+        else:
+            content_weight = search_weights.get('content', 0.5)
+            title_weight = search_weights.get('title', 0.5)
+    except Exception as e:
+        print(f"가중치 설정 오류: {e}")
+        content_weight = 0.5
+        title_weight = 0.5
     
     try:
         # 1. 원본 쿼리와 미리 확장된 키워드로 검색
@@ -327,8 +388,13 @@ def search_relevant_chunks(query, expanded_keywords, vectorizer, title_vectorize
                 # 제목 벡터라이저가 처리할 수 없는 경우 0으로 설정
                 title_sims = np.zeros(len(content_sims))
             
-            # 확장 키워드(법령 제목 기반)에 더 높은 가중치
-            weight = 1.0 if search_query == query else 2
+            # 확장 키워드(법령 제목 기반)에 더 높은 가중치 (제목 가중치가 0이 아닌 경우에만)
+            if title_weight > 0.0:
+                weight = 1.0 if search_query == query else 2
+            else:
+                # 제목 가중치가 0이면 확장 키워드도 일반 키워드와 동일하게 처리
+                weight = 1.0
+            
             weighted_content_sims = content_sims * weight
             weighted_title_sims = title_sims * weight
             
@@ -350,12 +416,13 @@ def search_relevant_chunks(query, expanded_keywords, vectorizer, title_vectorize
             except:
                 combined_title_sims = np.zeros(len(combined_content_sims) if 'combined_content_sims' in locals() else title_matrix.shape[0])
         
-        # 4. 전체 내용 유사도와 제목 유사도의 가중평균 (전체 내용에 더 높은 가중치)
-        content_weight = 0.5  # 전체 내용 가중치
-        title_weight = 0.5    # 제목 가중치
-        
-        combined_sims = (combined_content_sims * content_weight + 
-                        combined_title_sims * title_weight)
+        # 4. 전체 내용 유사도와 제목 유사도의 가중평균 (사용자 설정 가중치 적용)
+        # 제목 가중치가 0이면 제목 검색을 완전히 비활성화
+        if title_weight == 0.0:
+            combined_sims = combined_content_sims  # 내용만 사용
+        else:
+            combined_sims = (combined_content_sims * content_weight + 
+                            combined_title_sims * title_weight)
         
         # 5. 상위 결과 선택
         indices = combined_sims.argsort()[-top_k:][::-1]
@@ -407,7 +474,7 @@ import queue
 
 # 기존 stream_agent_response_to_queue 함수를 다음으로 교체:
 
-def get_agent_response(law_name: str, question: str, history: str, embedding_data: Dict, expanded_keywords: str):
+def get_agent_response(law_name: str, question: str, history: str, embedding_data: Dict, expanded_keywords: str, search_weights=None):
     """
     에이전트 응답을 일반적인 방식으로 생성하는 동기 함수.
     스트리밍 없이 완성된 답변만 반환.
@@ -420,7 +487,7 @@ def get_agent_response(law_name: str, question: str, history: str, embedding_dat
         return law_name, "해당 법령 데이터를 처리할 수 없습니다."
 
     try:
-        final_context = search_relevant_chunks(question, expanded_keywords, vec, title_vec, mat, title_mat, chunks)
+        final_context = search_relevant_chunks(question, expanded_keywords, vec, title_vec, mat, title_mat, chunks, search_weights=search_weights)
         
         if not final_context:
             return law_name, "관련 법령 조항을 찾을 수 없습니다."
@@ -457,8 +524,8 @@ def get_agent_response(law_name: str, question: str, history: str, embedding_dat
 
 
 
-def analyze_query(question: str, collected_laws=None) -> Tuple[str, List[str], str]:
-    """사용자 쿼리 분석 및 키워드 생성 (동기 함수) - 법령 제목 용어 활용"""
+def analyze_query(question: str, collected_laws=None, search_weights=None) -> Tuple[str, List[str], str]:
+    """사용자 쿼리 분석 및 키워드 생성 (동기 함수) - 제목 가중치 설정에 따라 다른 전략 사용"""
     # 법령 제목 용어 추출
     title_terms = []
     if collected_laws:
@@ -466,12 +533,12 @@ def analyze_query(question: str, collected_laws=None) -> Tuple[str, List[str], s
     
     preprocessor = QueryPreprocessor(title_terms)
     
-    # 1. 유사 쿼리 3개 생성 (API 호출 1회) - 법령 제목 용어 활용
-    similar_questions = preprocessor.generate_similar_questions(question)
+    # 1. 유사 쿼리 3개 생성 (API 호출 1회) - 제목 가중치 설정에 따라 다른 전략
+    similar_questions = preprocessor.generate_similar_questions(question, search_weights)
     
-    # 2. 원본 + 유사 쿼리를 합쳐 키워드 및 유사어 생성 (API 호출 1회) - 법령 제목 용어 우선
+    # 2. 원본 + 유사 쿼리를 합쳐 키워드 및 유사어 생성 (API 호출 1회) - 제목 가중치 설정에 따라 다른 전략
     combined_query_text = " ".join([question] + similar_questions)
-    expanded_keywords = preprocessor.extract_keywords_and_synonyms(combined_query_text)
+    expanded_keywords = preprocessor.extract_keywords_and_synonyms(combined_query_text, search_weights)
     
     return question, similar_questions, expanded_keywords
 
