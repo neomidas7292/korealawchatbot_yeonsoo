@@ -435,13 +435,11 @@ with tab1:
         
 
     # 대화 히스토리 표시
-    chat_container = st.container()
-    with chat_container:
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg['role']):
-                st.markdown(msg['content'])
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
 
-    # 질문 입력창을 대화 끝나고 맨 아래 배치
+    # 질문 입력창을 마지막 답변 직후에 배치
     if user_input := st.chat_input("질문을 입력하세요"):
         if not st.session_state.law_data:
             st.warning("먼저 사이드바에서 법령 데이터를 수집하고 처리해주세요.")
