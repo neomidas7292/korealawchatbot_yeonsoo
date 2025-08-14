@@ -321,7 +321,7 @@ class QueryPreprocessor:
         
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=prompt
             )
             # 응답에서 질문들 추출
@@ -508,7 +508,7 @@ def get_agent_response(law_name: str, question: str, history: str, embedding_dat
         
         client = get_model()
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         

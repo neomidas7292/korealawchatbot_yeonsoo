@@ -6,6 +6,31 @@ from typing import List, Dict, Any
 import tempfile
 import os
 
+def filter_empty_titles_from_json(json_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """제목이 빈 문자열이거나 null인 항목들을 제거하는 함수
+    
+    Args:
+        json_data: JSON 데이터 리스트
+        
+    Returns:
+        제목이 빈 문자열이나 null이 아닌 항목들만 포함한 리스트
+    """
+    filtered_data = []
+    removed_count = 0
+    
+    for item in json_data:
+        title = item.get("제목")
+        # None, 빈 문자열, 공백만 있는 경우 모두 제외
+        if title is not None and str(title).strip():
+            filtered_data.append(item)
+        else:
+            removed_count += 1
+    
+    if removed_count > 0:
+        st.info(f"📝 업로드된 파일에서 제목이 없는 {removed_count}개 항목을 제거했습니다.")
+    
+    return filtered_data
+
 def extract_text_from_pdf(pdf_file) -> str:
     """
     업로드된 PDF 파일에서 텍스트를 추출하는 함수

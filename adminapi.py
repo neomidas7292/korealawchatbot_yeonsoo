@@ -245,7 +245,7 @@ def convert_admin_rule_data_to_chatbot_format(rule_data: Dict) -> List[Dict]:
         rule_data: 행정규칙 API에서 받은 데이터
         
     Returns:
-        챗봇용 JSON 형식 리스트
+        챗봇용 JSON 형식 리스트 (빈 제목 항목 제거됨)
     """
     chatbot_data = []
     
@@ -257,4 +257,19 @@ def convert_admin_rule_data_to_chatbot_format(rule_data: Dict) -> List[Dict]:
         }
         chatbot_data.append(chatbot_item)
     
-    return chatbot_data
+    # 제목이 빈 문자열이나 null인 항목들 제거
+    filtered_data = []
+    removed_count = 0
+    
+    for item in chatbot_data:
+        title = item.get("제목")
+        # None, 빈 문자열, 공백만 있는 경우 모두 제외
+        if title is not None and str(title).strip():
+            filtered_data.append(item)
+        else:
+            removed_count += 1
+    
+    if removed_count > 0:
+        st.info(f"📝 행정규칙 데이터에서 제목이 없는 {removed_count}개 항목을 제거했습니다.")
+    
+    return filtered_data

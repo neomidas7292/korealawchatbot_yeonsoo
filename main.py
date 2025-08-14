@@ -12,7 +12,7 @@ import threading
 import queue
 
 # 로컬 유틸리티 및 API 모듈을 가져옵니다.
-from pdf_json import convert_pdf_to_json, validate_json_structure, preview_json_data, download_json_file
+from pdf_json import convert_pdf_to_json, validate_json_structure, preview_json_data, download_json_file, filter_empty_titles_from_json
 from lawapi import LawAPI, convert_law_data_to_chatbot_format
 from adminapi import AdminAPI, convert_admin_rule_data_to_chatbot_format
 from law_article_search import render_law_search_ui
@@ -90,6 +90,32 @@ def remove_from_collected_laws(name):
         if name in st.session_state.embedding_data:
             del st.session_state.embedding_data[name]
 
+def should_download_three_stage_comparison(law_name):
+    """법령명이 '~법' 또는 '~법률'로 끝나는지 확인하는 함수"""
+    if not law_name:
+        return False
+    
+    # 법령명이 '법' 또는 '법률'로 끝나는지 확인
+    return law_name.endswith('법') or law_name.endswith('법률')
+
+def try_download_three_stage_comparison(law_api, law_name):
+    """3단 비교 데이터 다운로드를 시도하는 함수"""
+    try:
+        # 3단 비교 데이터 다운로드 시도
+        comparison_data = law_api.download_three_stage_comparison_as_json(law_name)
+        if comparison_data and len(comparison_data) > 0:
+            # 3단 비교 데이터가 있으면 추가
+            comparison_name = f"{law_name}_3단비교"
+            add_to_collected_laws(comparison_name, '3단 비교', comparison_data)
+            st.success(f"✅ '{comparison_name}' 3단 비교 다운로드 완료 ({len(comparison_data)}개 조문)")
+            return True
+        else:
+            st.info(f"ℹ️ '{law_name}'의 3단 비교 데이터가 없습니다.")
+            return False
+    except Exception as e:
+        st.warning(f"⚠️ '{law_name}' 3단 비교 다운로드 중 오류: {str(e)}")
+        return False
+
 def clear_cache():
     """캐시를 삭제하는 함수"""
     # Streamlit 캐시 삭제
@@ -156,8 +182,10 @@ with st.sidebar:
                             file_name = uploaded_file.name.replace('.pdf', '')
                             json_data = convert_pdf_to_json(uploaded_file)
                             if json_data and validate_json_structure(json_data):
-                                add_to_collected_laws(file_name, 'PDF 파일', json_data)
-                                st.success(f"✅ {file_name} 변환 완료 ({len(json_data)}개 조문)")
+                                # 빈 제목 항목들 제거
+                                filtered_data = filter_empty_titles_from_json(json_data)
+                                add_to_collected_laws(file_name, 'PDF 파일', filtered_data)
+                                st.success(f"✅ {file_name} 변환 완료 ({len(filtered_data)}개 조문)")
                             else:
                                 st.error(f"❌ {file_name} 변환 실패")
         
@@ -170,8 +198,10 @@ with st.sidebar:
                         try:
                             json_data = json.loads(uploaded_file.read().decode('utf-8'))
                             if validate_json_structure(json_data):
-                                add_to_collected_laws(file_name, 'JSON 파일', json_data)
-                                st.success(f"✅ {file_name} 추가 완료 ({len(json_data)}개 조문)")
+                                # 빈 제목 항목들 제거
+                                filtered_data = filter_empty_titles_from_json(json_data)
+                                add_to_collected_laws(file_name, 'JSON 파일', filtered_data)
+                                st.success(f"✅ {file_name} 추가 완료 ({len(filtered_data)}개 조문)")
                             else:
                                 st.error(f"❌ {file_name} 구조 검증 실패")
                         except Exception as e:
@@ -196,6 +226,11 @@ with st.sidebar:
                                 law_name = law_data.get("법령명_한글", law_query)
                                 add_to_collected_laws(law_name, '법률 API', chatbot_data)
                                 st.success(f"✅ '{law_name}' 검색 완료 ({len(chatbot_data)}개 조문)")
+                                
+                                # 법령명이 '~법' 또는 '~법률'로 끝나면 3단 비교 데이터도 다운로드
+                                if should_download_three_stage_comparison(law_name):
+                                    st.info(f"🔄 '{law_name}'은(는) 법률이므로 3단 비교 데이터도 다운로드합니다...")
+                                    try_download_three_stage_comparison(law_api, law_name)
                             else:
                                 st.error(f"'{law_query}' 검색 결과가 없습니다.")
                         except Exception as e:
@@ -210,12 +245,27 @@ with st.sidebar:
                             try:
                                 law_api = LawAPI(LAW_API_KEY)
                                 results = law_api.batch_download_laws(law_names)
+                                
+                                # 3단 비교 데이터를 다운로드할 법령 목록
+                                laws_for_three_stage = []
+                                
                                 for law_name, law_data in results.items():
                                     chatbot_data = convert_law_data_to_chatbot_format(law_data)
                                     display_name = law_data.get("법령명_한글", law_name)
                                     add_to_collected_laws(display_name, '법률 API', chatbot_data)
+                                    
+                                    # 3단 비교 대상인지 확인
+                                    if should_download_three_stage_comparison(display_name):
+                                        laws_for_three_stage.append(display_name)
+                                
                                 if results:
                                     st.success(f"총 {len(results)}개 법령 검색 완료")
+                                    
+                                    # 3단 비교 데이터 다운로드
+                                    if laws_for_three_stage:
+                                        st.info(f"🔄 법률 {len(laws_for_three_stage)}개에 대한 3단 비교 데이터를 다운로드합니다...")
+                                        for law_name in laws_for_three_stage:
+                                            try_download_three_stage_comparison(law_api, law_name)
                                 else:
                                     st.error("검색된 법령이 없습니다.")
                             except Exception as e:
@@ -279,7 +329,8 @@ with st.sidebar:
             'PDF 파일': '📄',
             'JSON 파일': '📝',
             '법률 API': '⚖️',
-            '행정규칙 API': '📋'
+            '행정규칙 API': '📋',
+            '3단 비교': '🔗'
         }
         
         for name, law_info in st.session_state.collected_laws.items():
