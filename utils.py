@@ -214,7 +214,7 @@ class QueryPreprocessor:
         
         if title_weight > 0.0:
             # 제목을 활용하는 경우: 기존 방식
-            title_terms_text = ', '.join(self.title_term) if self.title_terms else '없음'
+            title_terms_text = ', '.join(self.title_terms) if self.title_terms else '없음'
             
             prompt = f"""
 당신은 대한민국 법령 전문가입니다. 다음 질문을 분석하여 검색에 도움이 되는 키워드를 생성해주세요.
