@@ -64,7 +64,7 @@ if 'collected_laws' not in st.session_state:
     st.session_state.collected_laws = {}  # {name: {'type': 'pdf/law_api/admin_api', 'data': json_data}}
 # 검색 가중치 설정
 if 'search_weights' not in st.session_state:
-    st.session_state.search_weights = {'content': 0.5, 'title': 0.5}  # 기본값: 50/50
+    st.session_state.search_weights = {'content': 1.0, 'title': 0.0}  # 기본값: 내용 전용 모드
 
 # --- 함수 정의 ---
 def start_new_chat():
@@ -382,8 +382,8 @@ with st.expander("🚀 사용 방법", expanded=False):
 * 이 과정은 수집된 법령들을 AI가 이해할 수 있는 형태(벡터 임베딩)로 변환하며, 이 과정이 없으면 AI 챗봇이 작동하지 않습니다.
 
 **3. 검색 설정 (아래 패널)**
-* **🤝 조문제목+내용 균형 모드 (기본)**: 조문의 제목과 내용을 모두 고려하여 검색합니다. 대부분의 법령에서 권장됩니다.
-* **📄 내용 전용 모드**: 조문 제목을 무시하고 내용만으로 검색합니다. 제목이 형식적이거나 검색에 도움이 되지 않는 법령(예: 외국환거래법)에 적합합니다.
+* **📄 조문내용 전용 모드 (기본)**: 조문의 내용만 분석하여 검색합니다. 사용자 질문이 여러 조문에 걸쳐 검토되어야 하는 경우, 또는 조문제목이 조문내용을 대표하지 못하는 경우(예: 외국환거래규정 등)에 적합합니다.
+* **🤝 조문제목+내용 균형 모드**: 조문의 제목과 내용을 모두 고려하여 검색합니다. 사용자 질문이 특정 조문을 바탕으로 검토되어야 하는 경우, 또는 조문제목이 조문내용을 잘 대표하는 경우(예: 대외무역관리규정 등)에 적합합니다.
 * 필요에 따라 검색 전략을 변경하여 더 정확한 답변을 받을 수 있습니다.
 
 **4. AI 챗봇 사용**
@@ -402,18 +402,22 @@ with st.expander("⚙️ 검색 설정", expanded=True):
     # 검색 모드 선택
     search_mode = st.radio(
         "🔍 사용자 질문과 유사도가 높은 조문 검색 모드 선택",
-        options=["🤝 조문제목+내용 균형 모드", "📄 내용 전용 모드 (예: 외국환거래법 및 하위규정)"],
-        index=1 if st.session_state.search_weights['title'] == 0.0 else 0,
+        options=["📄 내용 전용 모드 (사용자 질문이 여러 조문에 걸쳐 검토되어야 하는 경우, 또는 조문제목이 조문내용을 대표하지 못하는 경우(예: 외국환거래규정 등)에 적합)", "🤝 조문제목+내용 균형 모드(사용자 질문이 특정 조문을 바탕으로 검토되어야 하는 경우, 또는 조문제목이 조문내용을 잘 대표하는 경우(예: 대외무역관리규정 등)에 적합)"],
+        index=0 if st.session_state.search_weights['title'] == 0.0 else 1,
         help="균형 모드: 제목과 내용을 50:50으로 검색 | 내용 전용: 제목을 무시하고 내용만 검색"
     )
     
     # 선택에 따라 가중치 설정
-    if search_mode == "📄 내용 전용 모드 (예: 외국환거래법 및 하위규정)":
+    if "내용 전용 모드" in search_mode:
         title_weight = 0.0
         content_weight = 1.0
-    else:
+    elif "균형 모드" in search_mode:
         title_weight = 0.5
         content_weight = 0.5
+    else:
+        # 기본값 설정
+        title_weight = 0.0
+        content_weight = 1.0
     
     
     # 세션 상태 업데이트
@@ -433,57 +437,64 @@ with tab1:
     if st.session_state.law_data:
         st.info(f"현재 {len(st.session_state.law_data)}개의 법령이 처리되어 사용 가능합니다: {', '.join(st.session_state.law_data.keys())}")
         
+    # 채팅 컨테이너 - 대화 히스토리와 입력을 함께 관리
+    chat_container = st.container()
+    
+    with chat_container:
+        # 대화 히스토리 표시
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg['role']):
+                st.markdown(msg['content'])
 
-    # 대화 히스토리 표시
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg['role']):
-            st.markdown(msg['content'])
-
-    # 질문 입력창을 마지막 답변 직후에 배치
+    # 질문 입력창 - 항상 마지막에 위치
     if user_input := st.chat_input("질문을 입력하세요"):
         if not st.session_state.law_data:
             st.warning("먼저 사이드바에서 법령 데이터를 수집하고 처리해주세요.")
             st.stop()
         
+        # 사용자 메시지를 히스토리에 추가하고 즉시 표시
         st.session_state.chat_history.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
         
-        # 챗봇 답변 생성 로직 교체
-        with st.chat_message("assistant"):
-            answer = None
-            full_answer = ""  # 스트리밍된 전체 답변 저장용
+        # 채팅 컨테이너 내에서 새 메시지들을 렌더링
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(user_input)
             
-            try:
-                with st.status("답변 생성 중...", expanded=True) as status:
-                    history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
-                    
-                    # 사용자 설정 가중치 가져오기
-                    search_weights = st.session_state.search_weights
-                    
-                    # 1. 질문 분석 (법령 제목 용어 활용)
-                    status.update(label="1/3: 질문 분석 중...", state="running")
-                    original_query, similar_queries, expanded_keywords = analyze_query(user_input, st.session_state.collected_laws, search_weights)
-                    
-                    with st.expander("🔍 쿼리 분석 결과"):
-                        st.markdown(f"**원본 질문:** {original_query}")
-                        st.markdown("**유사 질문:**")
-                        st.markdown('\n'.join([f'- {q}' for q in similar_queries]))
-                        st.markdown(f"**확장 키워드:** {expanded_keywords}")
+            # 챗봇 답변 생성 로직
+            with st.chat_message("assistant"):
+                answer = None
+                full_answer = ""  # 스트리밍된 전체 답변 저장용
+                
+                try:
+                    with st.status("답변 생성 중...", expanded=True) as status:
+                        history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
+                        
+                        # 사용자 설정 가중치 가져오기
+                        search_weights = st.session_state.search_weights
+                        
+                        # 1. 질문 분석 (법령 제목 용어 활용)
+                        status.update(label="1/3: 질문 분석 중...", state="running")
+                        original_query, similar_queries, expanded_keywords = analyze_query(user_input, st.session_state.collected_laws, search_weights)
+                        
+                        with st.expander("🔍 쿼리 분석 결과"):
+                            st.markdown(f"**원본 질문:** {original_query}")
+                            st.markdown("**유사 질문:**")
+                            st.markdown('\n'.join([f'- {q}' for q in similar_queries]))
+                            st.markdown(f"**확장 키워드:** {expanded_keywords}")
 
-                    # 2. 법령별 답변 생성 (병렬 처리, 스트리밍 없음)
-                    status.update(label="2/3: 법령별 답변 생성 중...", state="running")
-                    
-                    law_names = list(st.session_state.law_data.keys())
-                    
-                    # ThreadPoolExecutor로 병렬 처리
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(law_names)) as executor:
-                        futures = {
-                            executor.submit(
-                                get_agent_response,
-                                law_name, user_input, history, st.session_state.embedding_data, expanded_keywords, search_weights
-                            ): law_name for law_name in law_names
-                        }
+                        # 2. 법령별 답변 생성 (병렬 처리, 스트리밍 없음)
+                        status.update(label="2/3: 법령별 답변 생성 중...", state="running")
+                        
+                        law_names = list(st.session_state.law_data.keys())
+                        
+                        # ThreadPoolExecutor로 병렬 처리
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=len(law_names)) as executor:
+                            futures = {
+                                executor.submit(
+                                    get_agent_response,
+                                    law_name, user_input, history, st.session_state.embedding_data, expanded_keywords, search_weights
+                                ): law_name for law_name in law_names
+                            }
                         
                         agent_responses = []
                         for future in concurrent.futures.as_completed(futures):
@@ -495,34 +506,34 @@ with tab1:
                                 st.markdown(f"**📚 {law_name}**")
                                 st.markdown(response)
 
-                    # 3. 최종 답변 종합 (스트리밍)
-                    status.update(label="3/3: 최종 답변 종합 중...", state="running")
-                    status.update(label="✅ 최종 답변 생성 중... (실시간)", state="complete", expanded=False)
+                        # 3. 최종 답변 종합 (스트리밍)
+                        status.update(label="3/3: 최종 답변 종합 중...", state="running")
+                        status.update(label="✅ 답변 처리 완료", state="complete", expanded=False)
 
-                # 최종 답변 스트리밍 표시
-                st.markdown("---")
-                st.markdown("### 🎯 **최종 통합 답변**")
-                
-                # 스트리밍 답변 표시용 플레이스홀더
-                answer_placeholder = st.empty()
-                
-                # 스트리밍 답변 생성 및 표시
-                for chunk in get_head_agent_response_stream(agent_responses, user_input, history):
-                    full_answer += chunk
-                    # 실시간으로 답변 업데이트 (타이핑 효과)
-                    answer_placeholder.markdown(full_answer + " ▌")
-                
-                # 최종 완성된 답변 표시 (커서 제거)
-                answer_placeholder.markdown(full_answer)
-                
-                # 세션 히스토리에 저장
-                if full_answer:
-                    st.session_state.chat_history.append({"role": "assistant", "content": full_answer})
+                    # 최종 답변 스트리밍 표시 (status 컨텍스트 밖에서)
+                    st.markdown("---")
+                    st.markdown("### 🎯 **최종 통합 답변**")
+                    
+                    # 스트리밍 답변 표시용 플레이스홀더
+                    answer_placeholder = st.empty()
+                    
+                    # 스트리밍 답변 생성 및 표시
+                    for chunk in get_head_agent_response_stream(agent_responses, user_input, history):
+                        full_answer += chunk
+                        # 실시간으로 답변 업데이트 (타이핑 효과)
+                        answer_placeholder.markdown(full_answer + " ▌")
+                    
+                    # 최종 완성된 답변 표시 (커서 제거)
+                    answer_placeholder.markdown(full_answer)
+                    
+                    # 세션 히스토리에 저장
+                    if full_answer:
+                        st.session_state.chat_history.append({"role": "assistant", "content": full_answer})
 
-            except Exception as e:
-                error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
-                st.error(error_msg)
-                st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+                except Exception as e:
+                    error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
+                    st.error(error_msg)
+                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
 
 with tab2:
     render_law_search_ui(st.session_state.collected_laws)
