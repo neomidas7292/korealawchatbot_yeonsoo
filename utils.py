@@ -222,14 +222,14 @@ class QueryPreprocessor:
 질문: "{query}"
 
 다음 작업을 수행해주세요:
-1. 질문에서 핵심 키워드 추출
-2. 반드시 아래 법령 제목 용어들 중에서 핵심 키워드를 우선적으로 선택
+1. 질문에서 핵심 키워드 및 유사어, 동의어, 관련어 추출
+2. 반드시 아래 법령 제목 용어들 중에서 핵심 키워드, 유사어, 동의어, 관련어를 우선적으로 선택
 
 우선적으로 참고할 법령 제목 용어들:
 {title_terms_text}
 
-응답 형식: 키워드들을 공백으로 구분하여 한 줄로 나열해주세요.
-예시: 근로시간 임금지급 연차휴가 근로 근무 노동 임금 급여 휴가 연차
+응답 형식: 키워드와 유사어들을 공백으로 구분하여 한 줄로 나열해주세요.
+예시: 관세조사 세액심사 관세법 세관장 세액 통관 사후심사
 
 단어들만 나열하고 다른 설명은 하지 마세요.
 """
@@ -298,6 +298,7 @@ class QueryPreprocessor:
 형식:
 1. (간결한 유사질문)
 2. (간결한 유사질문)
+3. (간결한 유사질문)
 
 예시 - 원본: "수입 원재료로 생산한 국내물품의 원산지 판정 기준은?"
 → 1. 국내생산물품등의 원산지 판정 기준은?
@@ -349,15 +350,15 @@ def search_relevant_chunks(query, expanded_keywords, vectorizer, title_vectorize
     # 기본 가중치 설정 (안전한 처리)
     try:
         if search_weights is None or not isinstance(search_weights, dict):
-            content_weight = 0.5
-            title_weight = 0.5
+            content_weight = 1.0
+            title_weight = 0.0
         else:
             content_weight = search_weights.get('content', 0.5)
             title_weight = search_weights.get('title', 0.5)
     except Exception as e:
         print(f"가중치 설정 오류: {e}")
-        content_weight = 0.5
-        title_weight = 0.5
+        content_weight = 1.0
+        title_weight = 0.0
     
     try:
         # 1. 원본 쿼리와 미리 확장된 키워드로 검색

@@ -491,8 +491,136 @@ class LawAPI:
         
         return filtered_data
     
+    def _extract_structure_title(self, content: str) -> str:
+        """장/절/관의 제목에서 핵심 키워드 추출
+        
+        Args:
+            content: "제1장 총칙 <개정 2010.12.30>" 또는 "제2절 법 적용의 원칙 등 <개정 2010.12.30>" 형태의 텍스트
+            
+        Returns:
+            "총칙" 또는 "법 적용의 원칙 등" 같은 전체 제목
+        """
+        if not content:
+            return ""
+        
+        # 먼저 개정 정보 제거
+        content_cleaned = re.sub(r'<[^>]*>', '', content).strip()
+        
+        # 정규표현식으로 장/절/관 패턴 찾기 (예외적 넘버링 포함)
+        patterns = [
+            r'제\d+장(?:의\d+)?\s+(.+)',  # "제1장 총칙" 또는 "제3장의2 특례" -> "총칙" 또는 "특례"
+            r'제\d+절(?:의\d+)?\s+(.+)',  # "제2절 법 적용" 또는 "제1절의2 특칙" -> "법 적용" 또는 "특칙"  
+            r'제\d+관(?:의\d+)?\s+(.+)',  # "제1관 일반사항" 또는 "제2관의3 특별규정" -> "일반사항" 또는 "특별규정"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, content_cleaned)
+            if match:
+                title = match.group(1).strip()
+                return title
+        
+        # 패턴이 매치되지 않으면 전체 텍스트 반환
+        return content_cleaned
+    
+    def _identify_structure_type(self, content: str) -> str:
+        """내용을 보고 장/절/관/조 중 어느 것인지 판별
+        
+        Args:
+            content: 항목의 내용
+            
+        Returns:
+            "장", "절", "관", "조" 중 하나
+        """
+        if not content:
+            return "조"
+        
+        # 내용이 "제X장", "제X절", "제X관" 패턴으로 시작하는지 확인 (예외적 넘버링 포함)
+        if re.match(r'^제\d+장(?:의\d+)?', content.strip()):
+            return "장"
+        elif re.match(r'^제\d+절(?:의\d+)?', content.strip()):
+            return "절"
+        elif re.match(r'^제\d+관(?:의\d+)?', content.strip()):
+            return "관"
+        else:
+            return "조"
+    
+    def _build_structure_hierarchy(self, chatbot_data: List[Dict]) -> List[Dict]:
+        """챗봇 데이터에서 장/절/관 구조 정보를 추출하여 각 조문에 매핑
+        
+        Args:
+            chatbot_data: 원본 챗봇 형식 데이터
+            
+        Returns:
+            상위 구조 정보가 추가된 챗봇 데이터
+        """
+        current_jang = ""  # 현재 장
+        current_jeol = ""  # 현재 절
+        current_gwan = ""  # 현재 관
+        
+        result = []
+        
+        for item in chatbot_data:
+            content = item.get("내용", "")
+            title = item.get("제목", "")
+            structure_type = self._identify_structure_type(content)
+            
+            if structure_type == "장":
+                current_jang = self._extract_structure_title(content)
+                current_jeol = ""  # 새로운 장이면 절과 관 초기화
+                current_gwan = ""
+                continue  # 장 항목은 결과에 포함하지 않음
+                
+            elif structure_type == "절":
+                current_jeol = self._extract_structure_title(content)
+                current_gwan = ""  # 새로운 절이면 관 초기화
+                continue  # 절 항목은 결과에 포함하지 않음
+                
+            elif structure_type == "관":
+                current_gwan = self._extract_structure_title(content)
+                continue  # 관 항목은 결과에 포함하지 않음
+                
+            else:  # 조문인 경우
+                # 상위 구조들을 제목에 합치기
+                enhanced_title = self._combine_structure_titles(
+                    current_jang, current_jeol, current_gwan, title
+                )
+                
+                enhanced_item = {
+                    "조번호": item.get("조번호", ""),
+                    "제목": enhanced_title,
+                    "내용": content
+                }
+                result.append(enhanced_item)
+        
+        return result
+    
+    def _combine_structure_titles(self, jang: str, jeol: str, gwan: str, original_title: str) -> str:
+        """장/절/관 제목들을 원래 제목과 합치기
+        
+        Args:
+            jang: 장 제목
+            jeol: 절 제목
+            gwan: 관 제목
+            original_title: 원래 조문 제목
+            
+        Returns:
+            합쳐진 제목 (쉼표로 구분)
+        """
+        parts = []
+        
+        if jang:
+            parts.append(jang)
+        if jeol:
+            parts.append(jeol)
+        if gwan:
+            parts.append(gwan)
+        if original_title:
+            parts.append(original_title)
+        
+        return ", ".join(parts)
+
     def download_three_stage_comparison_as_json(self, law_name: str) -> Optional[List[Dict]]:
-        """법령명으로 3단 비교 데이터를 검색하여 챗봇 형식으로 반환
+        """법령명으로 3단 비교 데이터를 검색하여 챗봇 형식으로 반환 (상위 구조 제목 포함)
         
         Args:
             law_name: 법령명
@@ -513,20 +641,20 @@ class LawAPI:
         # 3. 챗봇 형식으로 변환
         chatbot_data = self.convert_three_stage_comparison_to_chatbot_format(comparison_data)
         
-        # 4. 제목이 빈 문자열인 항목들 제거
+        # 4. 장/절/관 구조 정보를 조문에 매핑
         if chatbot_data:
-            chatbot_data = self.filter_empty_titles(chatbot_data)
+            chatbot_data = self._build_structure_hierarchy(chatbot_data)
         
         return chatbot_data if chatbot_data else None
 
 def convert_law_data_to_chatbot_format(law_data: Dict) -> List[Dict]:
-    """법령 데이터를 챗봇 형식으로 변환
+    """법령 데이터를 챗봇 형식으로 변환 (상위 구조 제목 포함)
     
     Args:
         law_data: 법령 API에서 받은 데이터
         
     Returns:
-        챗봇용 JSON 형식 리스트 (빈 제목 항목 제거됨)
+        챗봇용 JSON 형식 리스트 (상위 구조가 제목에 포함됨)
     """
     chatbot_data = []
     
@@ -538,19 +666,246 @@ def convert_law_data_to_chatbot_format(law_data: Dict) -> List[Dict]:
         }
         chatbot_data.append(chatbot_item)
     
-    # 제목이 빈 문자열이나 null인 항목들 제거
-    filtered_data = []
-    removed_count = 0
+    # 장/절/관 구조 정보를 조문에 매핑
+    enhanced_data = _build_structure_hierarchy_standalone(chatbot_data)
+    
+    return enhanced_data
+
+def _extract_structure_title_standalone(content: str) -> str:
+    """장/절/관의 제목에서 핵심 키워드 추출 (독립 함수)
+    
+    Args:
+        content: "제1장 총칙 <개정 2010.12.30>" 또는 "제2절 법 적용의 원칙 등 <개정 2010.12.30>" 형태의 텍스트
+        
+    Returns:
+        "총칙" 또는 "법 적용의 원칙 등" 같은 전체 제목
+    """
+    if not content:
+        return ""
+    
+    # 먼저 개정 정보 제거
+    content_cleaned = re.sub(r'<[^>]*>', '', content).strip()
+    
+    # 정규표현식으로 장/절/관 패턴 찾기 (예외적 넘버링 포함)
+    patterns = [
+        r'제\d+장(?:의\d+)?\s+(.+)',  # "제1장 총칙" 또는 "제3장의2 특례" -> "총칙" 또는 "특례"
+        r'제\d+절(?:의\d+)?\s+(.+)',  # "제2절 법 적용" 또는 "제1절의2 특칙" -> "법 적용" 또는 "특칙"  
+        r'제\d+관(?:의\d+)?\s+(.+)',  # "제1관 일반사항" 또는 "제2관의3 특별규정" -> "일반사항" 또는 "특별규정"
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, content_cleaned)
+        if match:
+            title = match.group(1).strip()
+            return title
+    
+    # 패턴이 매치되지 않으면 전체 텍스트 반환
+    return content_cleaned
+
+def _identify_structure_type_standalone(content: str) -> str:
+    """내용을 보고 장/절/관/조 중 어느 것인지 판별 (독립 함수)
+    
+    Args:
+        content: 항목의 내용
+        
+    Returns:
+        "장", "절", "관", "조" 중 하나
+    """
+    if not content:
+        return "조"
+    
+    # 내용이 "제X장", "제X절", "제X관" 패턴으로 시작하는지 확인 (예외적 넘버링 포함)
+    if re.match(r'^제\d+장(?:의\d+)?', content.strip()):
+        return "장"
+    elif re.match(r'^제\d+절(?:의\d+)?', content.strip()):
+        return "절"
+    elif re.match(r'^제\d+관(?:의\d+)?', content.strip()):
+        return "관"
+    else:
+        return "조"
+
+def _combine_structure_titles_standalone(jang: str, jeol: str, gwan: str, original_title: str) -> str:
+    """장/절/관 제목들을 원래 제목과 합치기 (독립 함수)
+    
+    Args:
+        jang: 장 제목
+        jeol: 절 제목
+        gwan: 관 제목
+        original_title: 원래 조문 제목
+        
+    Returns:
+        합쳐진 제목 (쉼표로 구분)
+    """
+    parts = []
+    
+    if jang:
+        parts.append(jang)
+    if jeol:
+        parts.append(jeol)
+    if gwan:
+        parts.append(gwan)
+    if original_title:
+        parts.append(original_title)
+    
+    return ", ".join(parts)
+
+def _build_structure_hierarchy_standalone(chatbot_data: List[Dict]) -> List[Dict]:
+    """챗봇 데이터에서 장/절/관 구조 정보를 추출하여 각 조문에 매핑 (독립 함수)
+    
+    Args:
+        chatbot_data: 원본 챗봇 형식 데이터
+        
+    Returns:
+        상위 구조 정보가 추가된 챗봇 데이터
+    """
+    current_jang = ""  # 현재 장
+    current_jeol = ""  # 현재 절
+    current_gwan = ""  # 현재 관
+    
+    result = []
     
     for item in chatbot_data:
-        title = item.get("제목")
-        # None, 빈 문자열, 공백만 있는 경우 모두 제외
-        if title is not None and str(title).strip():
-            filtered_data.append(item)
-        else:
-            removed_count += 1
+        content = item.get("내용", "")
+        title = item.get("제목", "")
+        structure_type = _identify_structure_type_standalone(content)
+        
+        if structure_type == "장":
+            current_jang = _extract_structure_title_standalone(content)
+            current_jeol = ""  # 새로운 장이면 절과 관 초기화
+            current_gwan = ""
+            continue  # 장 항목은 결과에 포함하지 않음
+            
+        elif structure_type == "절":
+            current_jeol = _extract_structure_title_standalone(content)
+            current_gwan = ""  # 새로운 절이면 관 초기화
+            continue  # 절 항목은 결과에 포함하지 않음
+            
+        elif structure_type == "관":
+            current_gwan = _extract_structure_title_standalone(content)
+            continue  # 관 항목은 결과에 포함하지 않음
+            
+        else:  # 조문인 경우
+            # 상위 구조들을 제목에 합치기
+            enhanced_title = _combine_structure_titles_standalone(
+                current_jang, current_jeol, current_gwan, title
+            )
+            
+            enhanced_item = {
+                "조번호": item.get("조번호", ""),
+                "제목": enhanced_title,
+                "내용": content
+            }
+            result.append(enhanced_item)
     
-    if removed_count > 0:
-        st.info(f"📝 법령 데이터에서 제목이 없는 {removed_count}개 항목을 제거했습니다.")
+    return result
+
+# 테스트 함수
+def test_structure_enhancement():
+    """기존 관세법 3단비교 JSON 파일을 사용하여 상위 구조 제목 합치기 테스트"""
     
-    return filtered_data
+    # 관세법 3단비교 JSON 파일 읽기
+    try:
+        with open("관세법_3단비교.json", "r", encoding="utf-8") as f:
+            test_data = json.load(f)
+            
+        print(f"원본 데이터 개수: {len(test_data)}")
+        
+        # 상위 구조를 조문에 매핑
+        enhanced_data = _build_structure_hierarchy_standalone(test_data)
+        
+        print(f"처리 후 데이터 개수: {len(enhanced_data)}")
+        print("\n=== 처리 결과 (처음 5개) ===")
+        
+        for i, item in enumerate(enhanced_data[:5]):
+            print(f"{i+1}. 조번호: {item['조번호']}")
+            print(f"   제목: {item['제목']}")
+            print(f"   내용: {item['내용'][:100]}...")
+            print()
+            
+        # 결과를 새 파일로 저장
+        output_filename = "관세법_3단비교_enhanced.json"
+        with open(output_filename, "w", encoding="utf-8") as f:
+            json.dump(enhanced_data, f, ensure_ascii=False, indent=2)
+            
+        print(f"✅ 결과가 '{output_filename}' 파일로 저장되었습니다.")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 테스트 중 오류 발생: {str(e)}")
+        return False
+
+def test_api_laws_enhancement():
+    """API를 통해 법령 데이터를 가져와서 상위 구조 제목 합치기 테스트"""
+    
+    # .env 파일에서 API 키 로드
+    import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        print("python-dotenv가 설치되지 않았습니다. 환경변수에서 직접 가져옵니다.")
+    
+    api_key = os.getenv('LAW_API_KEY')
+    if not api_key:
+        print("LAW_API_KEY 환경변수가 설정되지 않았습니다.")
+        print("API 키를 직접 입력해주세요:")
+        api_key = input("API 키: ").strip()
+        if not api_key:
+            print("API 키가 입력되지 않아 테스트를 중단합니다.")
+            return
+    
+    # 테스트할 법령 목록
+    laws_to_test = [
+        "외국환거래법",
+        "대외무역법"
+    ]
+    
+    # LawAPI 인스턴스 생성
+    law_api = LawAPI(api_key)
+    
+    print("=== API를 통한 법령 데이터 상위 구조 제목 합치기 테스트 ===")
+    
+    for law_name in laws_to_test:
+        print(f"\n📋 {law_name} 테스트 시작...")
+        
+        try:
+            # 3단 비교 데이터 다운로드 (상위 구조 제목이 자동으로 합쳐짐)
+            enhanced_data = law_api.download_three_stage_comparison_as_json(law_name)
+            
+            if enhanced_data:
+                print(f"✅ {law_name} 데이터 처리 완료: {len(enhanced_data)}개 조문")
+                
+                # 처리 결과 샘플 출력
+                print("=== 처리 결과 (처음 3개) ===")
+                for i, item in enumerate(enhanced_data[:3]):
+                    print(f"{i+1}. 조번호: {item['조번호']}")
+                    print(f"   제목: {item['제목']}")
+                    print(f"   내용: {item['내용'][:80]}...")
+                    print()
+                
+                # 결과를 파일로 저장
+                output_filename = f"{law_name}_3단비교_enhanced.json"
+                with open(output_filename, "w", encoding="utf-8") as f:
+                    json.dump(enhanced_data, f, ensure_ascii=False, indent=2)
+                print(f"📁 결과가 '{output_filename}' 파일로 저장되었습니다.")
+                
+            else:
+                print(f"❌ {law_name} 데이터를 가져올 수 없습니다.")
+                
+        except Exception as e:
+            print(f"❌ {law_name} 처리 중 오류 발생: {str(e)}")
+    
+    print("\n🎉 모든 법령 테스트 완료!")
+
+if __name__ == "__main__":
+    print("=== 장/절/관 구조 제목 합치기 테스트 ===")
+    print("1. 기존 파일 테스트: test_structure_enhancement()")
+    print("2. API 테스트: test_api_laws_enhancement()")
+    print()
+    
+    # 기존 파일 테스트
+    print("--- 기존 관세법 파일 테스트 ---")
+    test_structure_enhancement()
+    
+    print("\n--- API를 통한 외국환거래법, 대외무역법 테스트 ---")
+    test_api_laws_enhancement()
